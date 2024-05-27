@@ -1,4 +1,4 @@
-package main
+package instance
 
 import (
 	"context"
@@ -11,29 +11,36 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func TestCreateJupyterNotebookContainer(t *testing.T) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatal(err)
+func TestContainer(t *testing.T) {
+	testCases := []struct {
+		config ContainerConfig
+	}{
+		{config: ContainerConfig{jupyterPort: "9999", sshPort: "2222"}},
 	}
-	defer cli.Close()
 
-	containerID, err := createJupyterNotebookContainer(cli)
-	if err != nil {
-		t.Error(err)
-	}
-	defer removeContainer(cli, containerID)
-	time.Sleep(10 * time.Second)
+	for i, tc := range testCases {
+		t.Run(tc.config.jupyterPort, func(t *testing.T) {
+			cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cli.Close()
+			containerID, err := createContainer(cli, tc.config)
+			if err != nil {
+				t.Error(err)
+			}
+			defer removeContainer(cli, containerID)
+			time.Sleep(5 * time.Second)
 
-	if err := checkContainerCreated(cli, containerID); err != nil {
-		t.Fatalf("container not created: %v", err)
+			if err := checkContainerCreated(cli, containerID); err != nil {
+				t.Fatalf("container not created: %v", err)
+			}
+			if err := checkJupyterResponse(tc.config.jupyterPort); err != nil {
+				t.Fatalf("failed to connect to jupyter notebook: %v", err)
+			}
+			t.Logf("test case %d passed", i+1)
+		})
 	}
-	t.Log("container created")
-
-	if err := checkJupyterResponse(); err != nil {
-		t.Fatalf("failed to connect to jupyter notebook: %v", err)
-	}
-	t.Log("jupyter notebook running")
 }
 
 func checkContainerCreated(cli *client.Client, containerID string) error {
@@ -52,8 +59,8 @@ func checkContainerCreated(cli *client.Client, containerID string) error {
 	return nil
 }
 
-func checkJupyterResponse() error {
-	resp, err := http.Get("http://localhost:8888")
+func checkJupyterResponse(port string) error {
+	resp, err := http.Get("http://localhost:" + port)
 	if err != nil {
 		return err
 	}
