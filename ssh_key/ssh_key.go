@@ -5,17 +5,20 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
+
+	"golang.org/x/crypto/ssh"
 )
 
-var SSHKeyDir = os.Getenv("HOME") + "/.ssh/cloud-basic"
+var KeyDir = os.Getenv("HOME") + "/.ssh/cloud-basic"
 
-func createSSHPrivateKey(keyName string) error {
-	if err := os.MkdirAll(SSHKeyDir, 0755); err != nil {
+func createPrivateKey(keyName string) error {
+	if err := os.MkdirAll(KeyDir, 0755); err != nil {
 		return err
 	}
 
-	privateKeyPath := SSHKeyDir + "/" + keyName
+	privateKeyPath := KeyDir + "/" + keyName
 	privateFile, err := os.Create(privateKeyPath)
 	if err != nil {
 		return err
@@ -39,8 +42,41 @@ func createSSHPrivateKey(keyName string) error {
 	return nil
 }
 
-func removeSSHKey(keyName string) error {
-	keyPath := SSHKeyDir + "/" + keyName
+func removePrivateKey(keyName string) error {
+	keyPath := KeyDir + "/" + keyName
+	if err := os.Remove(keyPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func createPublicKey(keyName string) error {
+	privateKeyPath := KeyDir + "/" + keyName
+	privateKeyFile, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return err
+	}
+
+	privateKeyBlock, _ := pem.Decode(privateKeyFile)
+	if privateKeyBlock == nil {
+		return errors.New("failed to decode private key")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(privateKeyBlock.Bytes)
+	if err != nil {
+		return err
+	}
+
+	publicKey, err := ssh.NewPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(privateKeyPath+".pub", ssh.MarshalAuthorizedKey(publicKey), 0644)
+}
+
+func removePublicKey(keyName string) error {
+	keyPath := KeyDir + "/" + keyName + ".pub"
 	if err := os.Remove(keyPath); err != nil {
 		return err
 	}
