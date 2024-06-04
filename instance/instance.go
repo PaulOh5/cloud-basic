@@ -9,11 +9,11 @@ import (
 )
 
 type ContainerConfig struct {
-	jupyterPort string
-	sshPort     string
+	JupyterPort string
+	SshPort     string
 }
 
-func createContainer(
+func CreateContainer(
 	cli *client.Client,
 	config ContainerConfig,
 ) (string, error) {
@@ -28,13 +28,13 @@ func createContainer(
 			"8888/tcp": []nat.PortBinding{
 				{
 					HostIP:   "",
-					HostPort: config.jupyterPort,
+					HostPort: config.JupyterPort,
 				},
 			},
 			"22/tcp": []nat.PortBinding{
 				{
 					HostIP:   "",
-					HostPort: config.sshPort,
+					HostPort: config.SshPort,
 				},
 			},
 		},
@@ -57,4 +57,12 @@ func createContainer(
 	}
 
 	return resp.ID, nil
+}
+
+func RemoveContainer(cli *client.Client, containerID string) error {
+	err := cli.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
+	if err != nil {
+		return err
+	}
+	return nil
 }
