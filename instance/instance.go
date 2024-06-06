@@ -17,21 +17,45 @@ type Instance struct {
 	containerID          string
 }
 
-func (i *Instance) IsRunning(ctx context.Context) (bool, error) {
-	// 컨테이너가 실행중인지 확인
+func (i *Instance) Exec(ctx context.Context) error {
+	return nil
+}
+
+func (i *Instance) Start(ctx context.Context) error {
+	err := i.cli.ContainerStart(ctx, i.containerID, container.StartOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *Instance) Stop(ctx context.Context) error {
+	err := i.cli.ContainerStop(ctx, i.containerID, container.StopOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *Instance) Remove(ctx context.Context) error {
+	err := i.cli.ContainerRemove(context.Background(), i.containerID, container.RemoveOptions{Force: true})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
 	ctr, err := i.cli.ContainerInspect(ctx, i.containerID)
 	if err != nil {
-		return false, err
+		return STOPPED, err
 	}
 
-	if !ctr.State.Running {
-		return false, nil
+	if ctr.State.Running {
+		return RUNNING, nil
 	}
 
-	// jupyter notebook 서버가 실행중인지 확인
-	// ssh 서버가 실행중인지 확인
-	// ssh 서버에 접속이 가능한지 확인
-	return true, nil
+	return STOPPED, nil
 }
 
 // func checkJupyterResponse(port string) error {
@@ -47,6 +71,7 @@ func (i *Instance) IsRunning(ctx context.Context) (bool, error) {
 // 	return nil
 // }
 
+// TODO: 리팩토링 필요
 func NewInstance(ctx context.Context) (*Instance, error) {
 	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 	if err != nil {

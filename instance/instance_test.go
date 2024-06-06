@@ -4,24 +4,42 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestInstance(t *testing.T) {
+func TestInstanceStatus(t *testing.T) {
 	instance, err := NewInstance(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
-	running, err := instance.IsRunning(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	status, err := instance.GetStatus(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, RUNNING, status)
 
-	if !running {
-		t.Fatal("instance not running")
-	}
+	err = instance.Stop(context.Background())
+	require.NoError(t, err)
+
+	status, err = instance.GetStatus(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, STOPPED, status)
+
+	err = instance.Start(context.Background())
+	require.NoError(t, err)
+
+	status, err = instance.GetStatus(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, RUNNING, status)
+
+	err = instance.Remove(context.Background())
+	require.NoError(t, err)
+
+	_, err = instance.cli.ContainerInspect(context.Background(), instance.containerID)
+	require.Error(t, err)
 }
 
 // func TestContainer(t *testing.T) {
