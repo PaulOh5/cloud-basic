@@ -3,7 +3,10 @@ package instance
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
 	sshkey "github.com/PaulOh5/cloud-basic/ssh_key"
 	"github.com/docker/docker/api/types"
@@ -11,16 +14,17 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	"golang.org/x/crypto/ssh"
 )
 
 type Instance struct {
 	cli                  *client.Client
-	sshKey               *sshkey.SSHKey
+	key                  *sshkey.SSHKey
 	jupyterPort, sshPort int
 	containerID          string
 }
 
-func (i *Instance) Exec(ctx context.Context, cmd ...string) (string, string, error) {
+func (i Instance) Exec(ctx context.Context, cmd ...string) (string, string, error) {
 	execConfig := types.ExecConfig{
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -48,7 +52,7 @@ func (i *Instance) Exec(ctx context.Context, cmd ...string) (string, string, err
 	return outBuf.String(), errBuf.String(), nil
 }
 
-func (i *Instance) Start(ctx context.Context) error {
+func (i Instance) Start(ctx context.Context) error {
 	err := i.cli.ContainerStart(ctx, i.containerID, container.StartOptions{})
 	if err != nil {
 		return err
@@ -56,7 +60,7 @@ func (i *Instance) Start(ctx context.Context) error {
 	return nil
 }
 
-func (i *Instance) Stop(ctx context.Context) error {
+func (i Instance) Stop(ctx context.Context) error {
 	err := i.cli.ContainerStop(ctx, i.containerID, container.StopOptions{})
 	if err != nil {
 		return err
@@ -64,7 +68,7 @@ func (i *Instance) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (i *Instance) Remove(ctx context.Context) error {
+func (i Instance) Remove(ctx context.Context) error {
 	err := i.cli.ContainerRemove(context.Background(), i.containerID, container.RemoveOptions{Force: true})
 	if err != nil {
 		return err
@@ -74,7 +78,7 @@ func (i *Instance) Remove(ctx context.Context) error {
 	return nil
 }
 
-func (i *Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
+func (i Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
 	ctr, err := i.cli.ContainerInspect(ctx, i.containerID)
 	if err != nil {
 		return STOPPED, err
@@ -87,18 +91,30 @@ func (i *Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
 	return STOPPED, nil
 }
 
-// func checkJupyterResponse(port string) error {
-// 	resp, err := http.Get("http://localhost:" + port)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer resp.Body.Close()
+func (i Instance) GetJupyterUrl() string {
+	return fmt.Sprintf("http://localhost:%d/tree?", i.jupyterPort)
+}
 
-// 	if resp.StatusCode != http.StatusOK {
-// 		return fmt.Errorf("jupyter notebook not running")
-// 	}
-// 	return nil
-// }
+func (i Instance) GetSshUrl() string {
+	return fmt.Sprintf("localhost:%d", i.sshPort)
+}
+
+func (i Instance) GetSshConfig() (*ssh.ClientConfig, error) {
+	signer, err := ssh.NewSignerFromKey(i.key.PrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &ssh.ClientConfig{
+		User: "root",
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	return config, nil
+}
 
 // TODO: 리팩토링 필요
 func NewInstance(ctx context.Context) (*Instance, error) {
@@ -107,7 +123,7 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 		return nil, err
 	}
 
-	sshKey, err := sshkey.NewSshKey()
+	key, err := sshkey.NewSshKey()
 	if err != nil {
 		return nil, err
 	}
@@ -159,32 +175,44 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 
 	instance := &Instance{
 		cli:         cli,
-		sshKey:      sshKey,
+		key:         key,
 		jupyterPort: *jupyterPort,
 		sshPort:     *sshPort,
 		containerID: resp.ID,
 	}
 
+	err = waitForInstanceReady(ctx, *instance)
+	if err != nil {
+		return nil, err
+	}
+
 	return instance, nil
 }
 
-type ContainerConfig struct {
-	JupyterPort string
-	SshPort     string
-}
-
-func applyKeyToContainer(
-	cli *client.Client,
-	containerID string,
-	privateKey, publicKey []byte,
-) error {
-	return nil
-}
-
-func RemoveContainer(cli *client.Client, containerID string) error {
-	err := cli.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
-	if err != nil {
-		return err
+func waitForInstanceReady(ctx context.Context, inst Instance) error {
+	client := http.Client{
+		Timeout: 5 * time.Second,
 	}
-	return nil
+
+	timeout := time.After(1 * time.Minute)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			return errors.New("jupyter notebook not running")
+		case <-ticker.C:
+			resp, err := client.Get(inst.GetJupyterUrl())
+			if err == nil && resp.StatusCode == http.StatusOK {
+				resp.Body.Close()
+				return nil
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+	}
 }
