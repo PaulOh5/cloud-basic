@@ -3,7 +3,6 @@ package instance
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,8 +13,7 @@ func TestInstanceStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	time.Sleep(5 * time.Second)
+	defer instance.Remove(context.Background())
 
 	status, err := instance.GetStatus(context.Background())
 	require.NoError(t, err)
@@ -40,6 +38,24 @@ func TestInstanceStatus(t *testing.T) {
 
 	_, err = instance.cli.ContainerInspect(context.Background(), instance.containerID)
 	require.Error(t, err)
+}
+
+func TestInstanceExec(t *testing.T) {
+	instance, err := NewInstance(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Remove(context.Background())
+
+	stdout, stderr, err := instance.Exec(context.Background(), "echo", "hello")
+	require.NoError(t, err)
+	assert.Equal(t, "hello\n", stdout)
+	assert.Empty(t, stderr)
+
+	stdout, stderr, err = instance.Exec(context.Background(), "ls", "/not/exist")
+	require.NoError(t, err)
+	assert.Empty(t, stdout)
+	assert.Equal(t, "ls: cannot access '/not/exist': No such file or directory\n", stderr)
 }
 
 // func TestContainer(t *testing.T) {

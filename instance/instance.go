@@ -1,12 +1,15 @@
 package instance
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	sshkey "github.com/PaulOh5/cloud-basic/ssh_key"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -17,8 +20,32 @@ type Instance struct {
 	containerID          string
 }
 
-func (i *Instance) Exec(ctx context.Context) error {
-	return nil
+func (i *Instance) Exec(ctx context.Context, cmd ...string) (string, string, error) {
+	execConfig := types.ExecConfig{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := i.cli.ContainerExecCreate(ctx, i.containerID, execConfig)
+	if err != nil {
+		return "", "", err
+	}
+
+	resp, err := i.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Close()
+
+	var outBuf, errBuf bytes.Buffer
+
+	_, err = stdcopy.StdCopy(&outBuf, &errBuf, resp.Reader)
+	if err != nil {
+		return "", "", err
+	}
+
+	return outBuf.String(), errBuf.String(), nil
 }
 
 func (i *Instance) Start(ctx context.Context) error {
@@ -42,6 +69,8 @@ func (i *Instance) Remove(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	i.cli.Close()
 	return nil
 }
 
