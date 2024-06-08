@@ -1,7 +1,6 @@
-package proxy
+package network
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,23 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func startHTTPServer(hs *HandlerSwitcher) *httptest.Server {
-	s := httptest.NewServer(hs)
-	return s
-}
-
-func getResponseBody(resp *http.Response) string {
-	output, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err.Error()
-	}
-	resp.Body.Close()
-	return string(output)
-}
-
 func TestHandlerSwitcher(t *testing.T) {
 	hs := NewHandlerSwitcher()
-	server := startHTTPServer(hs)
+	server := httptest.NewServer(hs)
 	defer server.Close()
 
 	hs.AddHandler("/hello", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
