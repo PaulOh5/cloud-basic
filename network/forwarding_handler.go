@@ -32,6 +32,10 @@ func (fh *ForwardingHandler) AddForwarding(key string, targetURL string) error {
 		return fmt.Errorf("key and targetURL should not be empty")
 	}
 
+	if key[0] != '/' {
+		key = "/" + key
+	}
+
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
 		return err

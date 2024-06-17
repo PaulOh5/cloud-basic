@@ -95,12 +95,12 @@ func (i Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
 
 func (i *Instance) EstablishConnect(fh *network.ForwardingHandler) error {
 	jupyterPath := fmt.Sprintf("http://127.0.0.1:%d", i.jupyterPort)
-	err := fh.AddForwarding("/"+i.containerID+"/jupyter", jupyterPath)
+	err := fh.AddForwarding("/"+i.containerID[12:]+"/jupyter", jupyterPath)
 	if err != nil {
 		return err
 	}
 
-	i.jupyterURL = "/" + i.containerID + "/jupyter"
+	i.jupyterURL = "/" + i.containerID[12:] + "/jupyter"
 	return nil
 }
 
