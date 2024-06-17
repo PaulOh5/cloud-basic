@@ -2,7 +2,6 @@ package instance
 
 import (
 	"context"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,25 +65,6 @@ func TestInstanceExecCommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, stdout)
 	assert.Equal(t, "ls: cannot access '/not/exist': No such file or directory\n", stderr)
-}
-
-func TestJupyterConnection(t *testing.T) {
-	inst, err := NewInstance(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() {
-		if err := inst.Remove(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	resp, err := http.Get(inst.GetJupyterUrl())
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestSshConnection(t *testing.T) {

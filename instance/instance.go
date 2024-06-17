@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/PaulOh5/cloud-basic/network"
 	sshkey "github.com/PaulOh5/cloud-basic/ssh_key"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -21,6 +22,7 @@ type Instance struct {
 	cli                  *client.Client
 	key                  *sshkey.SSHKey
 	jupyterPort, sshPort int
+	jupyterURL           string
 	containerID          string
 }
 
@@ -91,8 +93,19 @@ func (i Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
 	return STOPPED, nil
 }
 
-func (i Instance) GetJupyterUrl() string {
-	return fmt.Sprintf("http://localhost:%d/tree?", i.jupyterPort)
+func (i *Instance) EstablishConnect(fh *network.ForwardingHandler) error {
+	jupyterPath := fmt.Sprintf("http://127.0.0.1:%d", i.jupyterPort)
+	err := fh.AddForwarding("/"+i.containerID+"/jupyter", jupyterPath)
+	if err != nil {
+		return err
+	}
+
+	i.jupyterURL = "/" + i.containerID + "/jupyter"
+	return nil
+}
+
+func (i Instance) Disconnect(fh *network.ForwardingHandler) {
+	fh.RemoveForwarding(i.jupyterURL)
 }
 
 func (i Instance) GetSshUrl() string {
@@ -205,7 +218,7 @@ func waitForInstanceReady(ctx context.Context, inst Instance) error {
 		case <-timeout:
 			return errors.New("jupyter notebook not running")
 		case <-ticker.C:
-			resp, err := client.Get(inst.GetJupyterUrl())
+			resp, err := client.Get(fmt.Sprintf("http://localhost:%d", inst.jupyterPort))
 			if err == nil && resp.StatusCode == http.StatusOK {
 				resp.Body.Close()
 				return nil
