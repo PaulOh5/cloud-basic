@@ -8,12 +8,38 @@ import (
 
 	"github.com/PaulOh5/cloud-basic/network"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
-func TestConnectJupyterInstance(t *testing.T) {
+func TestConnectSsh(t *testing.T) {
 	inst, err := NewInstance(context.Background())
-	require.NoError(t, err)
+	assert.NoError(t, err)
+
+	t.Cleanup(func() {
+		if err := inst.Remove(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	config, err := inst.GetSshConfig()
+	assert.NoError(t, err)
+
+	sshClient, err := ssh.Dial("tcp", inst.GetSshUrl(), config)
+	assert.NoError(t, err)
+	defer sshClient.Close()
+
+	session, err := sshClient.NewSession()
+	assert.NoError(t, err)
+	defer session.Close()
+
+	output, err := session.CombinedOutput("echo hello")
+	assert.NoError(t, err)
+	assert.Equal(t, "hello\n", string(output))
+}
+
+func TestConnectJupyter(t *testing.T) {
+	inst, err := NewInstance(context.Background())
+	assert.NoError(t, err)
 
 	t.Cleanup(func() {
 		if err := inst.Remove(context.Background()); err != nil {
@@ -35,3 +61,8 @@ func TestConnectJupyterInstance(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+// func TestConnectSsh(t *testing.T) {
+// 	inst, err := NewInstance(context.Background())
+// 	assert.NoError(t, err)
+// }

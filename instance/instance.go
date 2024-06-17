@@ -8,13 +8,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/PaulOh5/cloud-basic/docker"
 	"github.com/PaulOh5/cloud-basic/network"
 	sshkey "github.com/PaulOh5/cloud-basic/ssh_key"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/go-connections/nat"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -26,21 +26,21 @@ type Instance struct {
 	containerID          string
 }
 
-func (i Instance) Exec(ctx context.Context, cmd ...string) (string, string, error) {
+func (inst *Instance) Exec(ctx context.Context, cmd ...string) (string, error) {
 	execConfig := types.ExecConfig{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	}
 
-	execID, err := i.cli.ContainerExecCreate(ctx, i.containerID, execConfig)
+	execID, err := inst.cli.ContainerExecCreate(ctx, inst.containerID, execConfig)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
-	resp, err := i.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	resp, err := inst.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	defer resp.Close()
 
@@ -48,40 +48,44 @@ func (i Instance) Exec(ctx context.Context, cmd ...string) (string, string, erro
 
 	_, err = stdcopy.StdCopy(&outBuf, &errBuf, resp.Reader)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
-	return outBuf.String(), errBuf.String(), nil
+	if errBuf.Len() > 0 {
+		return outBuf.String(), errors.New(errBuf.String())
+	}
+
+	return outBuf.String(), nil
 }
 
-func (i Instance) Start(ctx context.Context) error {
-	err := i.cli.ContainerStart(ctx, i.containerID, container.StartOptions{})
+func (inst *Instance) Start(ctx context.Context) error {
+	err := inst.cli.ContainerStart(ctx, inst.containerID, container.StartOptions{})
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (i Instance) Stop(ctx context.Context) error {
-	err := i.cli.ContainerStop(ctx, i.containerID, container.StopOptions{})
+func (inst *Instance) Stop(ctx context.Context) error {
+	err := inst.cli.ContainerStop(ctx, inst.containerID, container.StopOptions{})
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (i Instance) Remove(ctx context.Context) error {
-	err := i.cli.ContainerRemove(context.Background(), i.containerID, container.RemoveOptions{Force: true})
+func (inst *Instance) Remove(ctx context.Context) error {
+	err := inst.cli.ContainerRemove(context.Background(), inst.containerID, container.RemoveOptions{Force: true})
 	if err != nil {
 		return err
 	}
 
-	i.cli.Close()
+	inst.cli.Close()
 	return nil
 }
 
-func (i Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
-	ctr, err := i.cli.ContainerInspect(ctx, i.containerID)
+func (inst *Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
+	ctr, err := inst.cli.ContainerInspect(ctx, inst.containerID)
 	if err != nil {
 		return STOPPED, err
 	}
@@ -93,27 +97,31 @@ func (i Instance) GetStatus(ctx context.Context) (InstanceStatus, error) {
 	return STOPPED, nil
 }
 
-func (i *Instance) EstablishConnect(fh *network.ForwardingHandler) error {
-	jupyterPath := fmt.Sprintf("http://127.0.0.1:%d", i.jupyterPort)
-	err := fh.AddForwarding("/"+i.containerID[12:]+"/jupyter", jupyterPath)
+func (inst *Instance) EstablishConnect(fh *network.ForwardingHandler) error {
+	jupyterPath := fmt.Sprintf("http://127.0.0.1:%d", inst.jupyterPort)
+	err := fh.AddForwarding("/"+inst.containerID[12:]+"/jupyter", jupyterPath)
 	if err != nil {
 		return err
 	}
 
-	i.jupyterURL = "/" + i.containerID[12:] + "/jupyter"
+	inst.jupyterURL = "/" + inst.containerID[12:] + "/jupyter"
 	return nil
 }
 
-func (i Instance) Disconnect(fh *network.ForwardingHandler) {
-	fh.RemoveForwarding(i.jupyterURL)
+func (inst *Instance) Disconnect(fh *network.ForwardingHandler) {
+	fh.RemoveForwarding(inst.jupyterURL)
 }
 
-func (i Instance) GetSshUrl() string {
-	return fmt.Sprintf("localhost:%d", i.sshPort)
+func (inst *Instance) GetSshUrl() string {
+	return fmt.Sprintf("localhost:%d", inst.sshPort)
 }
 
-func (i Instance) GetSshConfig() (*ssh.ClientConfig, error) {
-	signer, err := ssh.NewSignerFromKey(i.key.PrivateKey)
+func (inst *Instance) GetSshConfig() (*ssh.ClientConfig, error) {
+	if inst.key == nil {
+		return nil, errors.New("ssh key not set")
+	}
+
+	signer, err := ssh.NewSignerFromKey(inst.key.PrivateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -129,80 +137,60 @@ func (i Instance) GetSshConfig() (*ssh.ClientConfig, error) {
 	return config, nil
 }
 
-// TODO: 리팩토링 필요
-func NewInstance(ctx context.Context) (*Instance, error) {
-	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, err
-	}
-
+func (inst *Instance) SetSshKey() error {
 	key, err := sshkey.NewSshKey()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	jupyterPort, sshPort := new(int), new(int)
-	allocatePorts(jupyterPort, sshPort)
-
-	containerConfig := container.Config{
-		Image: "cloud",
-		ExposedPorts: nat.PortSet{
-			"8888/tcp": struct{}{},
-			"22/tcp":   struct{}{},
-		},
+	cmdGroup := [][]string{
+		{"mkdir", "-p", "/root/.ssh"},
+		{"echo", "\"" + string(ssh.MarshalAuthorizedKey(key.PublicKey)) + "\"", ">", "/root/.ssh/authorized_keys"},
+		{"chmod", "600", "/root/.ssh/authorized_keys"},
 	}
 
-	hostConfig := container.HostConfig{
-		PortBindings: nat.PortMap{
-			"8888/tcp": []nat.PortBinding{
-				{
-					HostIP:   "",
-					HostPort: fmt.Sprintf("%d", *jupyterPort),
-				},
-			},
-			"22/tcp": []nat.PortBinding{
-				{
-					HostIP:   "",
-					HostPort: fmt.Sprintf("%d", *sshPort),
-				},
-			},
-		},
+	fmt.Println(cmdGroup[1])
+
+	for _, cmd := range cmdGroup {
+		_, err = inst.Exec(context.Background(), cmd...)
+		if err != nil {
+			return err
+		}
 	}
 
-	resp, err := cli.ContainerCreate(
-		ctx,
-		&containerConfig,
-		&hostConfig,
-		nil,
-		nil,
-		"",
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	err = cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	instance := &Instance{
-		cli:         cli,
-		key:         key,
-		jupyterPort: *jupyterPort,
-		sshPort:     *sshPort,
-		containerID: resp.ID,
-	}
-
-	err = waitForInstanceReady(ctx, *instance)
-	if err != nil {
-		return nil, err
-	}
-
-	return instance, nil
+	return nil
 }
 
-func waitForInstanceReady(ctx context.Context, inst Instance) error {
+// TODO: 리팩토링 필요
+func NewInstance(ctx context.Context) (*Instance, error) {
+	instId, jPort, sPort, cli, err := docker.GenerateCloudContainer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	inst := &Instance{
+		cli:         cli,
+		jupyterPort: jPort,
+		sshPort:     sPort,
+		containerID: instId,
+	}
+
+	err = inst.SetSshKey()
+	if err != nil {
+		inst.Remove(ctx)
+		return nil, err
+	}
+
+	err = waitForInstanceReady(ctx, inst)
+	if err != nil {
+		inst.Remove(ctx)
+		return nil, err
+	}
+
+	return inst, nil
+}
+
+func waitForInstanceReady(ctx context.Context, inst *Instance) error {
 	client := http.Client{
 		Timeout: 5 * time.Second,
 	}

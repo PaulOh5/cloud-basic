@@ -56,15 +56,13 @@ func TestInstanceExecCommand(t *testing.T) {
 		}
 	})
 
-	stdout, stderr, err := inst.Exec(context.Background(), "echo", "hello")
+	stdout, err := inst.Exec(context.Background(), "echo", "hello")
 	require.NoError(t, err)
 	assert.Equal(t, "hello\n", stdout)
-	assert.Empty(t, stderr)
 
-	stdout, stderr, err = inst.Exec(context.Background(), "ls", "/not/exist")
-	require.NoError(t, err)
+	stdout, err = inst.Exec(context.Background(), "ls", "/not/exist")
+	assert.Error(t, err)
 	assert.Empty(t, stdout)
-	assert.Equal(t, "ls: cannot access '/not/exist': No such file or directory\n", stderr)
 }
 
 func TestSshConnection(t *testing.T) {
